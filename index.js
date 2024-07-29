@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const morgan = require("morgan");
+const SSLCommerzPayment = require("sslcommerz-lts");
 const port = process.env.port || 5000;
 // middleware
 const corsOptions = {
@@ -35,6 +36,10 @@ const verifyToken = async (req, res, next) => {
   });
 };
 
+const store_id = process.env.STORE_ID;
+const store_passwd = process.env.STORE_ID_PASS;
+const is_live = false; //true for live, false for sandbox
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -50,6 +55,7 @@ async function run() {
   const courseCollection = database.collection("courses");
   const admissionCollection = database.collection("admissions");
   const cartCollection = database.collection("cart");
+  const assignmentsCollection = database.collection("assignments");
 
   // Role Verifaction Middlewares
   // For Admins
@@ -174,14 +180,14 @@ async function run() {
       } else {
         const result = await usersCollection.updateOne(
           query,
-          { $set: { ...user, timestamp: new Date() } },
+          { $set: { ...user, timestamp: Date.now() } },
           options
         );
         res.send(result);
       }
     });
 
-    // get user role
+    // get user details
     app.get("/user/:email", async (req, res) => {
       const email = req.params.email;
 
@@ -255,10 +261,84 @@ async function run() {
       }
     });
 
+    // Get Assignment for student
+    app.get("/assignments/student/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        if (!email) {
+          res.status(404).json({ message: "email not found" });
+        }
+        const query = { studentEmail: email };
+        const result = await assignmentsCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+    // Get Assignment teacher
+    app.get("/assignments/teacher/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        if (!email) {
+          res.status(404).json({ message: "email not found" });
+        }
+        const query = { teacherEmail: email };
+        const result = await assignmentsCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+      }
+    });
+
+    // update assignment
+    app.put("/assignments/teacher/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const assignmentData = req.body;
+      console.log(assignmentData);
+
+      // handle the update here
+      try {
+        const result = await assignmentsCollection.updateOne(
+          query,
+          {
+            $set: {
+              mark: assignmentData.mark,
+              feedback: assignmentData.feedback,
+            },
+          },
+          { upsert: false } // If the assignment doesn't exist, insert it
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Assignment not found or no changes made" });
+        }
+
+        res
+          .status(200)
+          .send({ message: "Assignment updated successfully", result });
+      } catch (error) {
+        console.error("Error updating assignment:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
     // Save course in database
     app.post("/course", async (req, res) => {
       const course = req.body;
       const result = await courseCollection.insertOne(course);
+      res.send(result);
+    });
+
+    // Save Assignment on db
+    app.post("/assignments", async (req, res) => {
+      const { assignment } = req.body;
+      const result = await assignmentsCollection.insertOne({
+        ...assignment,
+        timestamp: Date.now(),
+      });
       res.send(result);
     });
 
@@ -384,6 +464,330 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await courseCollection.deleteOne(query);
       res.send(result);
+    });
+
+    // Get Admission course
+    app.get("/admissions/:email", async (req, res) => {
+      const email = req.params.email;
+
+      try {
+        const result = await admissionCollection.find({ email }).toArray();
+        res.send(result);
+      } catch (error) {
+        console.log("Fetching an Error on the Server");
+        res.status(500).json({ error: "Internal Error" });
+      }
+    });
+
+    // Get Admissions course by id
+    app.get("/admissions/course/:id", async (req, res) => {
+      const id = req.params.id;
+      console.log("the id is =========> ", id);
+
+      const result = courseCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    // sslcommerz payment gateway
+    app.post("/order", async (req, res) => {
+      const { email, courseInfo, shippingDetails } = req.body;
+      // Extract course IDs from courseInfo
+      const courseIds = courseInfo.map((course) => course._id);
+
+      // Generate a unique transaction ID
+      const tran_id = new ObjectId().toString();
+
+      // Prepare data for SSLCommerz
+      const data = {
+        total_amount: shippingDetails.totalAmount,
+        currency: "BDT",
+        tran_id: tran_id,
+        success_url: `http://localhost:5000/payment/success/${tran_id}`,
+        fail_url: "http://localhost:3030/fail",
+        cancel_url: "http://localhost:3030/cancel",
+        ipn_url: "http://localhost:3030/ipn",
+        shipping_method: "Courier",
+        product_name: "Course",
+        product_category: "IT",
+        product_profile: "general",
+        cus_name: `${shippingDetails.firstName} ${shippingDetails.lastName}`,
+        cus_email: shippingDetails.shippingEmail,
+        cus_add1: shippingDetails.address,
+        cus_add2: shippingDetails.address,
+        cus_city: shippingDetails.city,
+        cus_state: shippingDetails.state,
+        cus_postcode: shippingDetails.zip,
+        cus_country: "Bangladesh",
+        cus_phone: shippingDetails.phone,
+        cus_fax: shippingDetails.phone,
+        ship_name: `${shippingDetails.firstName} ${shippingDetails.lastName}`,
+        ship_add1: shippingDetails.address,
+        ship_add2: shippingDetails.address,
+        ship_city: shippingDetails.city,
+        ship_state: shippingDetails.state,
+        ship_postcode: shippingDetails.zip,
+        ship_country: "Bangladesh",
+      };
+
+      // Initialize SSLCommerzPayment instance
+      const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live);
+
+      try {
+        // Initialize the payment
+        const apiResponse = await sslcz.init(data);
+
+        // Ensure GatewayPageURL or equivalent property exists in apiResponse
+        if (apiResponse && apiResponse.GatewayPageURL) {
+          const GatewayPageURL = apiResponse.GatewayPageURL;
+
+          // Save order details in the database
+          const order = {
+            email,
+            courseInfo,
+            date: Date.now(),
+            data,
+            paymentStatus: false,
+            transaction_id: tran_id,
+          };
+          const result = await admissionCollection.insertOne(order);
+
+          // Remove courses from the cart
+
+          res.send({ url: GatewayPageURL });
+          console.log("Redirecting to:", GatewayPageURL);
+        } else {
+          console.error("GatewayPageURL not found in API response");
+          res
+            .status(500)
+            .json({ error: "GatewayPageURL not found in API response" });
+        }
+      } catch (err) {
+        console.error("SSLCommerz initialization error:", err);
+        res.status(500).json({ error: "Failed to initialize payment" });
+      }
+      // Payment success route
+      app.post("/payment/success/:tranId", async (req, res) => {
+        const transId = req.params.tranId;
+        const result = await admissionCollection.updateOne(
+          { transaction_id: transId },
+          {
+            $set: {
+              paymentStatus: true,
+            },
+          }
+        );
+
+        if (result.modifiedCount > 0) {
+          const deleteResult = await cartCollection.deleteMany({
+            email,
+            _id: { $in: courseIds.map((id) => new ObjectId(id)) },
+          });
+          if (deleteResult.deletedCount === courseIds.length) {
+            console.log("Courses removed from cart:", deleteResult);
+          } else {
+            console.error("Some courses were not removed from the cart");
+          }
+          console.log(result);
+          res.redirect("http://localhost:3000/");
+        } else {
+          res.status(500).json({ error: "Failed to update payment status" });
+        }
+      });
+    });
+
+    // ==========> Statistics <=============
+    //==== For Teacher======
+    // Get Nubmer Of Courses added by a teacher
+    app.get("/teacher/:email/courses/count", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const courseCount = await courseCollection.countDocuments({
+          "teacher.email": email,
+        });
+        res.status(200).json({ courseCount });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Get earnings for each course added by a teacher
+    app.get("/teacher/:email/earnings", async (req, res) => {
+      const email = req.params.email;
+
+      try {
+        const earnings = await admissionCollection
+          .aggregate([
+            {
+              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
+            },
+            {
+              $group: {
+                _id: "$_id",
+                totalEarnings: { $first: "$data.total_amount" },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalEarnings: { $sum: "$totalEarnings" },
+              },
+            },
+          ])
+          .toArray();
+
+        res
+          .status(200)
+          .json({ totalEarnings: earnings[0]?.totalEarnings || 0 });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Get total students who purchased courses from a specific teacher
+
+    app.get("/teacher/:email/students/count", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const studentCount = await admissionCollection
+          .aggregate([
+            {
+              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
+            },
+            { $group: { _id: "$email" } },
+            { $count: "totalStudents" },
+          ])
+          .toArray();
+        res
+          .status(200)
+          .json({ totalStudents: studentCount[0]?.totalStudents || 0 });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Get total assignment for teacher
+    app.get("/teacher/:email/assignment/count", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const assignmentCount = await assignmentsCollection.countDocuments({
+          teacherEmail: email,
+        });
+        res.status(200).json({ assignmentCount });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Get earnings over time for a teacher
+    app.get("/teacher/:email/earnings/history", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const earningsHistory = await admissionCollection
+          .aggregate([
+            {
+              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
+            },
+            {
+              $group: {
+                _id: "$data.tran_id",
+                date: { $first: "$date" },
+                amount: { $sum: "$data.total_amount" },
+              },
+            },
+            { $sort: { date: 1 } },
+          ])
+          .toArray();
+
+        res.status(200).json({ earningsHistory });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // =============>for Student<=============
+    // Get assignment marks for a student
+    app.get("/student/:email/assignments/marks", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const assignments = await assignmentsCollection
+          .find({ studentEmail: email })
+          .toArray();
+        const marksDistribution = assignments.reduce((acc, assignment) => {
+          const mark = assignment.mark;
+          if (acc[mark]) {
+            acc[mark]++;
+          } else {
+            acc[mark] = 1;
+          }
+          return acc;
+        }, {});
+        res.status(200).json({ marksDistribution });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Get number of courses purchased by a student
+    app.get("/student/:email/courses/purchased", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const courseCount = await admissionCollection.countDocuments({
+          email,
+          paymentStatus: true,
+        });
+        res.status(200).json({ courseCount });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Get Number of Assignments Submitted by a student
+    app.get("/student/:email/assignments/count", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const assignmentCount = await assignmentsCollection.countDocuments({
+          studentEmail: email,
+        });
+        res.status(200).json({ assignmentCount });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Get average mark for assignments of a student
+    app.get("/student/:email/assignments/average-mark", async (req, res) => {
+      const email = req.params.email;
+      try {
+        const assignments = await assignmentsCollection
+          .find({ studentEmail: email })
+          .toArray();
+
+        if (assignments.length === 0) {
+          return res
+            .status(200)
+            .json({ averageMark: 0, batch: "No assignments" });
+        }
+
+        const totalMarks = assignments.reduce(
+          (acc, assignment) => acc + parseFloat(assignment.mark),
+          0
+        );
+        const averageMark = totalMarks / assignments.length;
+
+        // Step 2: Define batches based on average marks
+        let batch;
+        if (averageMark === 60) {
+          batch = "A+";
+        } else if (averageMark <= 59 && averageMark >= 50) {
+          batch = "A";
+        } else if (averageMark <= 49 && averageMark >= 40) {
+          batch = "B";
+        } else if (averageMark <= 39 && averageMark >= 30) {
+          batch = "D";
+        } else {
+          batch = "F";
+        }
+
+        res.status(200).json({ averageMark, batch });
+      } catch (error) {
+        res.status(500).json({ error: "Internal Server Error" });
+      }
     });
 
     // Send a ping to confirm a successful connection
