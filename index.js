@@ -466,13 +466,27 @@ async function run() {
       res.send(result);
     });
 
-    // Get Admission course
+    // Get Admission course with pagination
     app.get("/admissions/:email", async (req, res) => {
       const email = req.params.email;
+      const page = parseInt(req.query.page) || 1; // Default to 1 if page is not provided
+      const limit = parseInt(req.query.limit) || 10; // Default to 10 if limit is not provided
 
       try {
-        const result = await admissionCollection.find({ email }).toArray();
-        res.send(result);
+        const totalCount = await admissionCollection.countDocuments({ email });
+        const totalPages = Math.ceil(totalCount / limit);
+        const result = await admissionCollection
+          .find({ email })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        res.send({
+          courses: result,
+          currentPage: page,
+          totalPages: totalPages,
+          hasNextPage: page < totalPages,
+        });
       } catch (error) {
         console.log("Fetching an Error on the Server");
         res.status(500).json({ error: "Internal Error" });
@@ -492,7 +506,7 @@ async function run() {
     app.post("/order", async (req, res) => {
       const { email, courseInfo, shippingDetails } = req.body;
       // Extract course IDs from courseInfo
-      const courseIds = courseInfo.map((course) => course._id);
+      const courseIds = courseInfo.map((course) => course.courseId);
 
       // Generate a unique transaction ID
       const tran_id = new ObjectId().toString();
@@ -510,22 +524,22 @@ async function run() {
         product_name: "Course",
         product_category: "IT",
         product_profile: "general",
-        cus_name: `${shippingDetails.firstName} ${shippingDetails.lastName}`,
-        cus_email: shippingDetails.shippingEmail,
-        cus_add1: shippingDetails.address,
-        cus_add2: shippingDetails.address,
-        cus_city: shippingDetails.city,
-        cus_state: shippingDetails.state,
-        cus_postcode: shippingDetails.zip,
+        cus_name: `${shippingDetails.fullName}`,
+        cus_email: "Dhaka Mohammadpur",
+        cus_add1: "Dhaka Mohammadpur",
+        cus_add2: "Dhaka Mohammadpur",
+        cus_city: "Dhaka Mohammadpur",
+        cus_state: "Dhaka Mohammadpur",
+        cus_postcode: "1207",
         cus_country: "Bangladesh",
-        cus_phone: shippingDetails.phone,
-        cus_fax: shippingDetails.phone,
-        ship_name: `${shippingDetails.firstName} ${shippingDetails.lastName}`,
-        ship_add1: shippingDetails.address,
-        ship_add2: shippingDetails.address,
-        ship_city: shippingDetails.city,
-        ship_state: shippingDetails.state,
-        ship_postcode: shippingDetails.zip,
+        cus_phone: "01719681150",
+        cus_fax: "01719681150",
+        ship_name: `${shippingDetails.fullName}`,
+        ship_add1: "Dhaka Mohammadpur",
+        ship_add2: "Dhaka Mohammadpur",
+        ship_city: "Dhaka Mohammadpur",
+        ship_state: "Dhaka Mohammadpur",
+        ship_postcode: "1207",
         ship_country: "Bangladesh",
       };
 
@@ -551,10 +565,17 @@ async function run() {
           };
           const result = await admissionCollection.insertOne(order);
 
-          // Remove courses from the cart
+          if (result.insertedId) {
+            // Remove courses from the cart
+            const removeResult = await cartCollection.deleteMany({
+              email: email,
+              courseId: { $in: courseIds },
+            });
+            console.log(removeResult);
 
-          res.send({ url: GatewayPageURL });
-          console.log("Redirecting to:", GatewayPageURL);
+            res.send({ url: GatewayPageURL });
+            console.log("Redirecting to:", GatewayPageURL);
+          }
         } else {
           console.error("GatewayPageURL not found in API response");
           res
@@ -588,7 +609,7 @@ async function run() {
             console.error("Some courses were not removed from the cart");
           }
           console.log(result);
-          res.redirect("http://localhost:3000/");
+          res.redirect("http://localhost:3000/dashboard/courses");
         } else {
           res.status(500).json({ error: "Failed to update payment status" });
         }
@@ -758,19 +779,21 @@ async function run() {
           .find({ studentEmail: email })
           .toArray();
 
-        if (assignments.length === 0) {
-          return res
-            .status(200)
-            .json({ averageMark: 0, batch: "No assignments" });
+        // Filter out assignments with 'mark' set to 'pending'
+        const validAssignments = assignments.filter(
+          (assignment) => assignment.mark !== "pending"
+        );
+
+        if (validAssignments.length === 0) {
+          return res.status(200).json({ averageMark: 0, batch: "N/A" });
         }
 
-        const totalMarks = assignments.reduce(
+        const totalMarks = validAssignments.reduce(
           (acc, assignment) => acc + parseFloat(assignment.mark),
           0
         );
-        const averageMark = totalMarks / assignments.length;
+        const averageMark = totalMarks / validAssignments.length;
 
-        // Step 2: Define batches based on average marks
         let batch;
         if (averageMark === 60) {
           batch = "A+";
