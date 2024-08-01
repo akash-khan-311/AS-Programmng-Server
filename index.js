@@ -13,8 +13,9 @@ const corsOptions = {
   origin: [
     "http://localhost:3000",
     "http://localhost:3001",
-    "https://as-programming-client.vercel.app",
+    "https://as-programming.vercel.app",
     "https://as-programming.netlify.app",
+    "https://as-programming-client-pmbt4goyv-akash-khans-projects-83768962.vercel.app",
   ],
   credentials: true,
   optionSuccessStatus: 200,
