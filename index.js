@@ -10,7 +10,12 @@ const SSLCommerzPayment = require("sslcommerz-lts");
 const port = process.env.port || 5000;
 // middleware
 const corsOptions = {
-  origin: ["http://localhost:3000", "http://localhost:3001"],
+  origin: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://as-programming-client.vercel.app",
+    "https://as-programming.netlify.app",
+  ],
   credentials: true,
   optionSuccessStatus: 200,
 };
