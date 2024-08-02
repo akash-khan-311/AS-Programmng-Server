@@ -16,6 +16,7 @@ const corsOptions = {
     "https://as-programming.vercel.app",
     "https://as-programming.netlify.app",
     "https://as-programming-client-pmbt4goyv-akash-khans-projects-83768962.vercel.app",
+    "https://as-programming-client.onrender.com",
   ],
   credentials: true,
   optionSuccessStatus: 200,
@@ -62,6 +63,7 @@ async function run() {
   const admissionCollection = database.collection("admissions");
   const cartCollection = database.collection("cart");
   const assignmentsCollection = database.collection("assignments");
+  const bookmarksCollection = database.collection("bookmarks");
 
   // Role Verifaction Middlewares
   // For Admins
