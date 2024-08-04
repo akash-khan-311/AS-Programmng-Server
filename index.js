@@ -245,7 +245,79 @@ async function run() {
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
+    // Get All Bookmarks for student
+    app.get("/bookmarks/:email", async (req, res) => {
+      const { email } = req.params;
+      try {
+        const bookmarksItems = await bookmarksCollection
+          .find({ email })
+          .toArray();
+        const courseIds = bookmarksItems.map((item) => item.courseId);
+        const courses = await courseCollection
+          .find({ _id: { $in: courseIds } })
+          .toArray();
+        res.status(200).json(courses);
+      } catch (error) {
+        console.error("Error fetching cart items:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Save Course in bookmarks for student
+    app.post("/bookmarks", async (req, res) => {
+      const { courseId, userEmail } = req.body;
+      console.log(courseId, userEmail);
+      if (!ObjectId.isValid(courseId)) {
+        return res.status(400).json({ message: "Invalid courseId" });
+      }
+      const courseObjectId = new ObjectId(courseId);
+      const bookmarkItem = {
+        email: userEmail,
+        courseId: courseObjectId,
+      };
 
+      try {
+        const existingItem = await bookmarksCollection.findOne(bookmarkItem);
+        if (existingItem) {
+          return res
+            .status(400)
+            .json({ message: "Course is already in the Bookmarks" });
+        }
+
+        const result = await bookmarksCollection.insertOne(bookmarkItem);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error("Error adding to bookmarks:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Remove Course From Bookmarks
+
+    app.delete("/bookmarks", async (req, res) => {
+      const { courseId, email } = req.body;
+      console.log(email, courseId);
+      if (!ObjectId.isValid(courseId)) {
+        return res.status(400).json({ message: "Invalid courseId" });
+      }
+      const courseObjectId = new ObjectId(courseId);
+      const bookmarkItem = {
+        email,
+        courseId: courseObjectId,
+      };
+
+      try {
+        const result = await bookmarksCollection.deleteOne(bookmarkItem);
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .json({ message: "Course not found in bookmarks" });
+        }
+        res.status(200).send(result);
+      } catch (error) {
+        console.error("Error removing from bookmarks:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
     // Get All Courses For Teacher
     app.get("/courses/:email", async (req, res) => {
       const email = req.params.email;
@@ -353,7 +425,7 @@ async function run() {
     // Save Course for user || CART
     app.post("/cart", async (req, res) => {
       const { courseId, userEmail } = req.body;
-      console.log(courseId, userEmail);
+
       if (!ObjectId.isValid(courseId)) {
         return res.status(400).json({ message: "Invalid courseId" });
       }
