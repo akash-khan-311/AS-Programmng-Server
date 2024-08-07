@@ -211,19 +211,44 @@ async function run() {
       try {
         const limit = parseInt(req.query.limit) || 10;
         const skip = parseInt(req.query.skip) || 0; // Adjust skip calculation
-
+        console.log('Fetching courses with status "approved"');
         const result = await courseCollection
-          .find()
+          .find({ status: "Approved" })
           .skip(skip)
           .limit(limit)
           .toArray();
-
+        console.log("Result:", result);
         res.send({ result });
       } catch (error) {
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
+    // Get All Courses for Admin
+    app.get("/courses/admin", async (req, res) => {
+      try {
+        const result = await courseCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
 
+    // Update course status for admin
+    app.put("/course/status/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const result = await courseCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "Approved" } }
+        );
+        res.send(result);
+      } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
     // Get Single Course
     app.get("/course/:id", async (req, res) => {
       const { id } = req.params;
@@ -243,6 +268,23 @@ async function run() {
       } catch (error) {
         console.error("Error fetching course:", error);
         res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Update Course for teacher
+    app.put("/course/:id", async (req, res) => {
+      const id = req.params.id;
+      const updatedCourse = req.body;
+
+      try {
+        const result = await courseCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedCourse }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
       }
     });
     // Get All Bookmarks for student
