@@ -27,11 +27,16 @@ app.use(cookieParser());
 app.use(morgan("dev"));
 app.use(express.json());
 
+const store_id = process.env.STORE_ID;
+const store_passwd = process.env.STORE_ID_PASS;
+const is_live = false; //true for live, false for sandbox
 const verifyToken = async (req, res, next) => {
   const token = req.cookies?.token;
-  console.log("cookies", req.cookies);
+  console.log("this is token=========>", token);
   if (!token) {
-    return res.status(401).send({ message: "unauthorized access" });
+    return res
+      .status(401)
+      .send({ message: "unauthorized access token not found" });
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
@@ -42,10 +47,6 @@ const verifyToken = async (req, res, next) => {
     next();
   });
 };
-
-const store_id = process.env.STORE_ID;
-const store_passwd = process.env.STORE_ID_PASS;
-const is_live = false; //true for live, false for sandbox
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -70,7 +71,7 @@ async function run() {
   const verifyAdmin = async (req, res, next) => {
     try {
       const user = req.user;
-
+      console.log(req.user);
       if (!user || !user.email) {
         console.log("No user or email in request");
         return res.status(401).send({ message: "Unauthorized access" });
@@ -129,20 +130,30 @@ async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
-    // Auth related api
+    // Auth related API
     app.post("/jwt", async (req, res) => {
-      const user = req.body;
-      console.log("I need a new jwt", user);
-      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-        expiresIn: "365d", // 1 year
-      });
-      res
-        .cookie("token", token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-        })
-        .send({ success: true });
+      try {
+        const user = req.body;
+        console.log("I need a new jwt", user);
+        // Generate JWT token
+        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+          expiresIn: "365d", // 1 year, consider reducing this
+        });
+
+        // Set the JWT token in an HTTP-only cookie
+        res
+          .cookie("token", token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+          })
+          .send({ success: true });
+      } catch (error) {
+        console.error("Failed to generate JWT:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to generate JWT" });
+      }
     });
 
     //Logout
@@ -196,7 +207,7 @@ async function run() {
     });
 
     // get user details
-    app.get("/user/:email", async (req, res) => {
+    app.get("/user/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
       const result = await usersCollection.findOne({ email });
@@ -224,7 +235,7 @@ async function run() {
       }
     });
     // Get All Courses for Admin
-    app.get("/courses/admin", async (req, res) => {
+    app.get("/courses/admin", verifyToken, async (req, res) => {
       try {
         const result = await courseCollection.find().toArray();
         res.send(result);
@@ -235,20 +246,25 @@ async function run() {
     });
 
     // Update course status for admin
-    app.put("/course/status/:id", async (req, res) => {
-      const id = req.params.id;
+    app.put(
+      "/course/status/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
 
-      try {
-        const result = await courseCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: "Approved" } }
-        );
-        res.send(result);
-      } catch (error) {
-        console.log(error);
-        res.status(500).json({ error: "Internal Server Error" });
+        try {
+          const result = await courseCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "Approved" } }
+          );
+          res.send(result);
+        } catch (error) {
+          console.log(error);
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     // Get Single Course
     app.get("/course/:id", async (req, res) => {
       const { id } = req.params;
@@ -272,7 +288,7 @@ async function run() {
     });
 
     // Update Course for teacher
-    app.put("/course/:id", async (req, res) => {
+    app.put("/course/:id", verifyToken, verifyTeacher, async (req, res) => {
       const id = req.params.id;
       const updatedCourse = req.body;
 
@@ -288,7 +304,7 @@ async function run() {
       }
     });
     // Get All Bookmarks for student
-    app.get("/bookmarks/:email", async (req, res) => {
+    app.get("/bookmarks/:email", verifyToken, async (req, res) => {
       const { email } = req.params;
       try {
         const bookmarksItems = await bookmarksCollection
@@ -305,7 +321,7 @@ async function run() {
       }
     });
     // Save Course in bookmarks for student
-    app.post("/bookmarks", async (req, res) => {
+    app.post("/bookmarks", verifyToken, async (req, res) => {
       const { courseId, userEmail } = req.body;
       console.log(courseId, userEmail);
       if (!ObjectId.isValid(courseId)) {
@@ -361,7 +377,7 @@ async function run() {
       }
     });
     // Get All Courses For Teacher
-    app.get("/courses/:email", async (req, res) => {
+    app.get("/courses/:email", verifyToken, verifyTeacher, async (req, res) => {
       const email = req.params.email;
       const query = { "teacher.email": email };
       const result = await courseCollection.find(query).toArray();
@@ -375,7 +391,7 @@ async function run() {
     app.get("/beginners", async (req, res) => {
       try {
         const result = await courseCollection
-          .find({ level: "Beginner" })
+          .find({ level: "Beginner", status: "Approved" })
           .toArray();
         res.send(result);
       } catch (error) {
@@ -384,7 +400,7 @@ async function run() {
     });
 
     // Get Assignment for student
-    app.get("/assignments/student/:email", async (req, res) => {
+    app.get("/assignments/student/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
         if (!email) {
@@ -398,64 +414,74 @@ async function run() {
       }
     });
     // Get Assignment teacher
-    app.get("/assignments/teacher/:email", async (req, res) => {
-      try {
-        const email = req.params.email;
-        if (!email) {
-          res.status(404).json({ message: "email not found" });
+    app.get(
+      "/assignments/teacher/:email",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+          if (!email) {
+            res.status(404).json({ message: "email not found" });
+          }
+          const query = { teacherEmail: email };
+          const result = await assignmentsCollection.find(query).toArray();
+          res.send(result);
+        } catch (error) {
+          console.log(error);
         }
-        const query = { teacherEmail: email };
-        const result = await assignmentsCollection.find(query).toArray();
-        res.send(result);
-      } catch (error) {
-        console.log(error);
       }
-    });
+    );
 
     // update assignment
-    app.put("/assignments/teacher/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const assignmentData = req.body;
-      console.log(assignmentData);
+    app.put(
+      "/assignments/teacher/:id",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const assignmentData = req.body;
+        console.log(assignmentData);
 
-      // handle the update here
-      try {
-        const result = await assignmentsCollection.updateOne(
-          query,
-          {
-            $set: {
-              mark: assignmentData.mark,
-              feedback: assignmentData.feedback,
+        // handle the update here
+        try {
+          const result = await assignmentsCollection.updateOne(
+            query,
+            {
+              $set: {
+                mark: assignmentData.mark,
+                feedback: assignmentData.feedback,
+              },
             },
-          },
-          { upsert: false } // If the assignment doesn't exist, insert it
-        );
+            { upsert: false } // If the assignment doesn't exist, insert it
+          );
 
-        if (result.modifiedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Assignment not found or no changes made" });
+          if (result.modifiedCount === 0) {
+            return res
+              .status(404)
+              .send({ message: "Assignment not found or no changes made" });
+          }
+
+          res
+            .status(200)
+            .send({ message: "Assignment updated successfully", result });
+        } catch (error) {
+          console.error("Error updating assignment:", error);
+          res.status(500).send({ message: "Internal Server Error" });
         }
-
-        res
-          .status(200)
-          .send({ message: "Assignment updated successfully", result });
-      } catch (error) {
-        console.error("Error updating assignment:", error);
-        res.status(500).send({ message: "Internal Server Error" });
       }
-    });
+    );
 
     // Save course in database
-    app.post("/course", async (req, res) => {
+    app.post("/course", verifyToken, verifyTeacher, async (req, res) => {
       const course = req.body;
       const result = await courseCollection.insertOne(course);
       res.send(result);
     });
 
     // Save Assignment on db
-    app.post("/assignments", async (req, res) => {
+    app.post("/assignments", verifyToken, async (req, res) => {
       const { assignment } = req.body;
       const result = await assignmentsCollection.insertOne({
         ...assignment,
@@ -465,7 +491,7 @@ async function run() {
     });
 
     // Save Course for user || CART
-    app.post("/cart", async (req, res) => {
+    app.post("/cart", verifyToken, async (req, res) => {
       const { courseId, userEmail } = req.body;
 
       if (!ObjectId.isValid(courseId)) {
@@ -494,7 +520,7 @@ async function run() {
     });
 
     // Get user cart items
-    app.get("/cart/:email", async (req, res) => {
+    app.get("/cart/:email", verifyToken, async (req, res) => {
       const { email } = req.params;
       try {
         const cartItems = await cartCollection.find({ email }).toArray();
@@ -510,7 +536,7 @@ async function run() {
     });
 
     // Delete course from cart
-    app.delete("/cart", async (req, res) => {
+    app.delete("/cart", verifyToken, async (req, res) => {
       const { email, courseId } = req.body;
 
       if (!ObjectId.isValid(courseId)) {
@@ -533,9 +559,52 @@ async function run() {
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
-
+    // Get payment info for admin
+    app.get("/admin/payment", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await admissionCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching payment info:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+    // Delete admission data from db
+    app.delete(
+      "/delete/admission/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        try {
+          const result = await admissionCollection.deleteOne(query);
+          res.send(result);
+        } catch (error) {
+          console.error("Error deleting admission data:", error);
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+    // Remove Assignment from db for admin
+    app.delete(
+      "/remove/assignment/:email",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const query = { studentEmail: email };
+        try {
+          const result = await assignmentsCollection.deleteMany(query);
+          res.send(result);
+        } catch (error) {
+          console.error("Error deleting assignment data:", error);
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
     // update user cover image in db
-    app.put("/user/cover/:email", async (req, res) => {
+    app.put("/user/cover/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const user = req.body;
       console.log(user);
@@ -555,33 +624,38 @@ async function run() {
     });
 
     // Get all users from db
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
     // update user role
-    app.put("/users/update/:email", async (req, res) => {
-      const email = req.params.email;
-      const user = req.body;
-      const query = { email: email };
-      const options = { upsert: true };
-      const updatedDoc = {
-        $set: {
-          ...user,
-          timestamp: Date.now(),
-        },
-      };
-      const result = await usersCollection.updateOne(
-        query,
-        updatedDoc,
-        options
-      );
-      res.send(result);
-    });
+    app.put(
+      "/users/update/:email",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const user = req.body;
+        const query = { email: email };
+        const options = { upsert: true };
+        const updatedDoc = {
+          $set: {
+            ...user,
+            timestamp: Date.now(),
+          },
+        };
+        const result = await usersCollection.updateOne(
+          query,
+          updatedDoc,
+          options
+        );
+        res.send(result);
+      }
+    );
 
     // remove course from db
-    app.delete("/course/:id", async (req, res) => {
+    app.delete("/course/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await courseCollection.deleteOne(query);
@@ -589,7 +663,7 @@ async function run() {
     });
 
     // Get Admission course with pagination
-    app.get("/admissions/:email", async (req, res) => {
+    app.get("/admissions/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const page = parseInt(req.query.page) || 1; // Default to 1 if page is not provided
       const limit = parseInt(req.query.limit) || 10; // Default to 10 if limit is not provided
@@ -625,7 +699,7 @@ async function run() {
     });
 
     // sslcommerz payment gateway
-    app.post("/order", async (req, res) => {
+    app.post("/order", verifyToken, async (req, res) => {
       const { email, courseInfo, shippingDetails } = req.body;
       // Extract course IDs from courseInfo
       const courseIds = courseInfo.map((course) => course.courseId);
@@ -741,199 +815,249 @@ async function run() {
     // ==========> Statistics <=============
     //==== For Teacher======
     // Get Nubmer Of Courses added by a teacher
-    app.get("/teacher/:email/courses/count", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const courseCount = await courseCollection.countDocuments({
-          "teacher.email": email,
-        });
-        res.status(200).json({ courseCount });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/teacher/:email/courses/count",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const courseCount = await courseCollection.countDocuments({
+            "teacher.email": email,
+          });
+          res.status(200).json({ courseCount });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     // Get earnings for each course added by a teacher
-    app.get("/teacher/:email/earnings", async (req, res) => {
-      const email = req.params.email;
+    app.get(
+      "/teacher/:email/earnings",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const email = req.params.email;
 
-      try {
-        const earnings = await admissionCollection
-          .aggregate([
-            {
-              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
-            },
-            {
-              $group: {
-                _id: "$_id",
-                totalEarnings: { $first: "$data.total_amount" },
+        try {
+          const earnings = await admissionCollection
+            .aggregate([
+              {
+                $match: {
+                  "courseInfo.teacherEmail": email,
+                  paymentStatus: true,
+                },
               },
-            },
-            {
-              $group: {
-                _id: null,
-                totalEarnings: { $sum: "$totalEarnings" },
+              {
+                $group: {
+                  _id: "$_id",
+                  totalEarnings: { $first: "$data.total_amount" },
+                },
               },
-            },
-          ])
-          .toArray();
+              {
+                $group: {
+                  _id: null,
+                  totalEarnings: { $sum: "$totalEarnings" },
+                },
+              },
+            ])
+            .toArray();
 
-        res
-          .status(200)
-          .json({ totalEarnings: earnings[0]?.totalEarnings || 0 });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+          res
+            .status(200)
+            .json({ totalEarnings: earnings[0]?.totalEarnings || 0 });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
 
     // Get total students who purchased courses from a specific teacher
 
-    app.get("/teacher/:email/students/count", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const studentCount = await admissionCollection
-          .aggregate([
-            {
-              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
-            },
-            { $group: { _id: "$email" } },
-            { $count: "totalStudents" },
-          ])
-          .toArray();
-        res
-          .status(200)
-          .json({ totalStudents: studentCount[0]?.totalStudents || 0 });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/teacher/:email/students/count",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const studentCount = await admissionCollection
+            .aggregate([
+              {
+                $match: {
+                  "courseInfo.teacherEmail": email,
+                  paymentStatus: true,
+                },
+              },
+              { $group: { _id: "$email" } },
+              { $count: "totalStudents" },
+            ])
+            .toArray();
+          res
+            .status(200)
+            .json({ totalStudents: studentCount[0]?.totalStudents || 0 });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
 
     // Get total assignment for teacher
-    app.get("/teacher/:email/assignment/count", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const assignmentCount = await assignmentsCollection.countDocuments({
-          teacherEmail: email,
-        });
-        res.status(200).json({ assignmentCount });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/teacher/:email/assignment/count",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const assignmentCount = await assignmentsCollection.countDocuments({
+            teacherEmail: email,
+          });
+          res.status(200).json({ assignmentCount });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     // Get earnings over time for a teacher
-    app.get("/teacher/:email/earnings/history", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const earningsHistory = await admissionCollection
-          .aggregate([
-            {
-              $match: { "courseInfo.teacherEmail": email, paymentStatus: true },
-            },
-            {
-              $group: {
-                _id: "$data.tran_id",
-                date: { $first: "$date" },
-                amount: { $sum: "$data.total_amount" },
+    app.get(
+      "/teacher/:email/earnings/history",
+      verifyToken,
+      verifyTeacher,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const earningsHistory = await admissionCollection
+            .aggregate([
+              {
+                $match: {
+                  "courseInfo.teacherEmail": email,
+                  paymentStatus: true,
+                },
               },
-            },
-            { $sort: { date: 1 } },
-          ])
-          .toArray();
+              {
+                $group: {
+                  _id: "$data.tran_id",
+                  date: { $first: "$date" },
+                  amount: { $sum: "$data.total_amount" },
+                },
+              },
+              { $sort: { date: 1 } },
+            ])
+            .toArray();
 
-        res.status(200).json({ earningsHistory });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+          res.status(200).json({ earningsHistory });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
 
     // =============>for Student<=============
     // Get assignment marks for a student
-    app.get("/student/:email/assignments/marks", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const assignments = await assignmentsCollection
-          .find({ studentEmail: email })
-          .toArray();
-        const marksDistribution = assignments.reduce((acc, assignment) => {
-          const mark = assignment.mark;
-          if (acc[mark]) {
-            acc[mark]++;
-          } else {
-            acc[mark] = 1;
-          }
-          return acc;
-        }, {});
-        res.status(200).json({ marksDistribution });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/student/:email/assignments/marks",
+      verifyToken,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const assignments = await assignmentsCollection
+            .find({ studentEmail: email })
+            .toArray();
+          const marksDistribution = assignments.reduce((acc, assignment) => {
+            const mark = assignment.mark;
+            if (acc[mark]) {
+              acc[mark]++;
+            } else {
+              acc[mark] = 1;
+            }
+            return acc;
+          }, {});
+          res.status(200).json({ marksDistribution });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     // Get number of courses purchased by a student
-    app.get("/student/:email/courses/purchased", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const courseCount = await admissionCollection.countDocuments({
-          email,
-          paymentStatus: true,
-        });
-        res.status(200).json({ courseCount });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/student/:email/courses/purchased",
+      verifyToken,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const courseCount = await admissionCollection.countDocuments({
+            email,
+            paymentStatus: true,
+          });
+          res.status(200).json({ courseCount });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
 
     // Get Number of Assignments Submitted by a student
-    app.get("/student/:email/assignments/count", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const assignmentCount = await assignmentsCollection.countDocuments({
-          studentEmail: email,
-        });
-        res.status(200).json({ assignmentCount });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/student/:email/assignments/count",
+      verifyToken,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const assignmentCount = await assignmentsCollection.countDocuments({
+            studentEmail: email,
+          });
+          res.status(200).json({ assignmentCount });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     // Get average mark for assignments of a student
-    app.get("/student/:email/assignments/average-mark", async (req, res) => {
-      const email = req.params.email;
-      try {
-        const assignments = await assignmentsCollection
-          .find({ studentEmail: email })
-          .toArray();
+    app.get(
+      "/student/:email/assignments/average-mark",
+      verifyToken,
+      async (req, res) => {
+        const email = req.params.email;
+        try {
+          const assignments = await assignmentsCollection
+            .find({ studentEmail: email })
+            .toArray();
 
-        // Filter out assignments with 'mark' set to 'pending'
-        const validAssignments = assignments.filter(
-          (assignment) => assignment.mark !== "pending"
-        );
+          // Filter out assignments with 'mark' set to 'pending'
+          const validAssignments = assignments.filter(
+            (assignment) => assignment.mark !== "pending"
+          );
 
-        if (validAssignments.length === 0) {
-          return res.status(200).json({ averageMark: 0, batch: "N/A" });
+          if (validAssignments.length === 0) {
+            return res.status(200).json({ averageMark: 0, batch: "N/A" });
+          }
+
+          const totalMarks = validAssignments.reduce(
+            (acc, assignment) => acc + parseFloat(assignment.mark),
+            0
+          );
+          const averageMark = totalMarks / validAssignments.length;
+
+          let batch;
+          if (averageMark === 60) {
+            batch = "A+";
+          } else if (averageMark <= 59 && averageMark >= 50) {
+            batch = "A";
+          } else if (averageMark <= 49 && averageMark >= 40) {
+            batch = "B";
+          } else if (averageMark <= 39 && averageMark >= 30) {
+            batch = "D";
+          } else {
+            batch = "F";
+          }
+
+          res.status(200).json({ averageMark, batch });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
         }
-
-        const totalMarks = validAssignments.reduce(
-          (acc, assignment) => acc + parseFloat(assignment.mark),
-          0
-        );
-        const averageMark = totalMarks / validAssignments.length;
-
-        let batch;
-        if (averageMark === 60) {
-          batch = "A+";
-        } else if (averageMark <= 59 && averageMark >= 50) {
-          batch = "A";
-        } else if (averageMark <= 49 && averageMark >= 40) {
-          batch = "B";
-        } else if (averageMark <= 39 && averageMark >= 30) {
-          batch = "D";
-        } else {
-          batch = "F";
-        }
-
-        res.status(200).json({ averageMark, batch });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
       }
-    });
+    );
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
