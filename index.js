@@ -606,21 +606,28 @@ async function run() {
     // update user cover image in db
     app.put("/user/cover/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
-      const user = req.body;
-      console.log(user);
-      const query = { email: email };
-      const options = { upsert: true };
-      const updatedDoc = {
-        $set: {
-          coverImg: user.coverImage,
-        },
-      };
-      const result = await usersCollection.updateOne(
-        query,
-        updatedDoc,
-        options
-      );
-      res.send(result);
+      const currentUser = req.body;
+      console.log(currentUser);
+      try {
+        const query = { email: email };
+        const options = { upsert: true };
+        const updatedDoc = {
+          $set: {
+            coverImg: currentUser?.coverImg,
+          },
+        };
+        const result = await usersCollection.updateOne(
+          query,
+          updatedDoc,
+          options
+        );
+        res.send(result);
+      } catch (error) {
+        console.error("Error updating cover image:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal server error" });
+      }
     });
 
     // Get all users from db
@@ -1053,6 +1060,68 @@ async function run() {
           }
 
           res.status(200).json({ averageMark, batch });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+
+    //===========> For Admin <===========
+    // Get total all user count for admin
+    app.get(
+      "/admin/users/count",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const userCount = await usersCollection.countDocuments();
+          res.status(200).json(userCount);
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+    //get total teacher count for admin
+    app.get(
+      "/admin/teacher/count",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const teacherCount = await usersCollection.countDocuments({
+            role: "teacher",
+          });
+          res.status(200).json(teacherCount);
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+    // get total student count for admin
+    app.get(
+      "/admin/student/count",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const studentCount = await usersCollection.countDocuments({
+            role: "student",
+          });
+          res.status(200).json(studentCount);
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+    // get total course count for admin
+    app.get(
+      "/admin/course/count",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const courseCount = await courseCollection.countDocuments({});
+          res.status(200).json(courseCount);
         } catch (error) {
           res.status(500).json({ error: "Internal Server Error" });
         }
