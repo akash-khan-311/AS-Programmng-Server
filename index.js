@@ -135,9 +135,10 @@ async function run() {
       try {
         const user = req.body;
         console.log("I need a new jwt", user);
+        const payload = { email: user?.email, role: user?.role };
         // Generate JWT token
-        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-          expiresIn: "365d", // 1 year, consider reducing this
+        const token = jwt.sign(payload, process.env.ACCESS_TOKEN_SECRET, {
+          expiresIn: "7d", // 1 year, consider reducing this
         });
 
         // Set the JWT token in an HTTP-only cookie
@@ -146,8 +147,9 @@ async function run() {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
             sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
           })
-          .send({ success: true });
+          .send({ success: true, token });
       } catch (error) {
         console.error("Failed to generate JWT:", error);
         res
@@ -235,7 +237,7 @@ async function run() {
       }
     });
     // Get All Courses for Admin
-    app.get("/courses/admin", verifyToken, async (req, res) => {
+    app.get("/courses/admin", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await courseCollection.find().toArray();
         res.send(result);
@@ -672,24 +674,11 @@ async function run() {
     // Get Admission course with pagination
     app.get("/admissions/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
-      const page = parseInt(req.query.page) || 1; // Default to 1 if page is not provided
-      const limit = parseInt(req.query.limit) || 10; // Default to 10 if limit is not provided
 
       try {
-        const totalCount = await admissionCollection.countDocuments({ email });
-        const totalPages = Math.ceil(totalCount / limit);
-        const result = await admissionCollection
-          .find({ email })
-          .skip((page - 1) * limit)
-          .limit(limit)
-          .toArray();
+        const result = await admissionCollection.find({ email }).toArray();
 
-        res.send({
-          courses: result,
-          currentPage: page,
-          totalPages: totalPages,
-          hasNextPage: page < totalPages,
-        });
+        res.send(result);
       } catch (error) {
         console.log("Fetching an Error on the Server");
         res.status(500).json({ error: "Internal Error" });
@@ -1097,30 +1086,15 @@ async function run() {
         }
       }
     );
-    // get total student count for admin
-    app.get(
-      "/admin/student/count",
-      verifyToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const studentCount = await usersCollection.countDocuments({
-            role: "student",
-          });
-          res.status(200).json(studentCount);
-        } catch (error) {
-          res.status(500).json({ error: "Internal Server Error" });
-        }
-      }
-    );
+
     // get total course count for admin
     app.get(
-      "/admin/course/count",
+      "/admin/courses/count",
       verifyToken,
       verifyAdmin,
       async (req, res) => {
         try {
-          const courseCount = await courseCollection.countDocuments({});
+          const courseCount = await courseCollection.countDocuments();
           res.status(200).json(courseCount);
         } catch (error) {
           res.status(500).json({ error: "Internal Server Error" });
