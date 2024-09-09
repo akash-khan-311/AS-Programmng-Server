@@ -13,9 +13,7 @@ const corsOptions = {
   origin: [
     "http://localhost:3000",
     "http://localhost:3001",
-    "https://as-programming.vercel.app",
-    "https://as-programming.netlify.app",
-    "https://as-programming-client-pmbt4goyv-akash-khans-projects-83768962.vercel.app",
+
     "https://as-programming-client.onrender.com",
   ],
   credentials: true,
@@ -138,7 +136,7 @@ async function run() {
         const payload = { email: user?.email, role: user?.role };
         // Generate JWT token
         const token = jwt.sign(payload, process.env.ACCESS_TOKEN_SECRET, {
-          expiresIn: "7d", // 1 year, consider reducing this
+          expiresIn: "1d", // 1 days, consider reducing this
         });
 
         // Set the JWT token in an HTTP-only cookie
@@ -146,8 +144,8 @@ async function run() {
           .cookie("token", token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            sameSite: "none",
+            maxAge: 24 * 60 * 60 * 1000, // 1 days
           })
           .send({ success: true, token });
       } catch (error) {
