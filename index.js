@@ -1054,7 +1054,7 @@ async function run() {
 
     //===========> For Admin <===========
     // Get total all user count for admin
-    app.get("/users/count", verifyToken, verifyAdmin, async (req, res) => {
+    app.get("admin/users/count", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const userCount = await usersCollection.countDocuments();
         res.status(200).json(userCount);
@@ -1093,6 +1093,33 @@ async function run() {
         }
       }
     );
+    // Get total earnings for admin
+    app.get("/admin/earnings", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const totalEarnings = await admissionCollection
+          .aggregate([
+            {
+              $match: {
+                paymentStatus: true, // Only include successful payments
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalEarnings: { $sum: "$data.total_amount" },
+              },
+            },
+          ])
+          .toArray();
+
+        res
+          .status(200)
+          .json({ totalEarnings: totalEarnings[0]?.totalEarnings || 0 });
+      } catch (error) {
+        console.error("Failed to fetch total earnings:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
