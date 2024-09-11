@@ -1054,14 +1054,19 @@ async function run() {
 
     //===========> For Admin <===========
     // Get total all user count for admin
-    app.get("admin/users/count", verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const userCount = await usersCollection.countDocuments();
-        res.status(200).json(userCount);
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
+    app.get(
+      "/admin/users/count",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const userCount = await usersCollection.countDocuments();
+          res.status(200).json(userCount);
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
       }
-    });
+    );
     //get total teacher count for admin
     app.get(
       "/admin/teacher/count",
